@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TruthLens | Real-Time News Verification Engine</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────── */
+    :root {
+      --bg:          #030712;
+      --card:        rgba(17, 24, 39, 0.75);
+      --glass:       rgba(255, 255, 255, 0.04);
+      --border:      rgba(255, 255, 255, 0.07);
+      --accent:      #00f2fe;
+      --accent-dim:  rgba(0, 242, 254, 0.12);
+      --text:        #f9fafb;
+      --text-dim:    #9ca3af;
+      --real:        #00f2fe;
+      --fake:        #ff0055;
+      --uncertain:   #ffcc00;
+      --lreal:       #4ade80;
+      --lfake:       #fb923c;
+      --fresh:       #22c55e;
+      --stale:       #f59e0b;
+      --very-stale:  #ef4444;
+    }
+
+    /* ── Reset ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      background-image:
+        radial-gradient(circle at 10% 20%, rgba(0,242,254,.06) 0%, transparent 42%),
+        radial-gradient(circle at 90% 80%, rgba(255,0,255,.05) 0%, transparent 42%);
+    }
+
+    /* ── Status Bar ─────────────────────────────────────────── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 24px;
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      font-size: .84rem;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--uncertain);
+      box-shadow: 0 0 10px var(--uncertain);
+      transition: all .3s ease;
+      flex-shrink: 0;
+    }
+    .status-dot.ready { background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+    .status-dot.error { background: var(--fake);   box-shadow: 0 0 12px var(--fake); }
+
+    .status-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .72rem;
+      color: var(--text-dim);
+      background: var(--glass);
+      padding: 4px 11px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+    .pill.accent { color: var(--accent); border-color: var(--accent-dim); }
+
+    /* ── Date/Time bar ──────────────────────────────────────── */
+    #dateBar {
+      text-align: center;
+      font-size: .78rem;
+      color: var(--text-dim);
+      padding: 6px 0;
+      background: rgba(0,0,0,.2);
+      border-bottom: 1px solid var(--border);
+      letter-spacing: .5px;
+    }
+    #dateBar strong { color: var(--accent); }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .container { max-width: 1120px; margin: 36px auto; padding: 0 20px; }
+
+    header { text-align: center; margin-bottom: 44px; }
+    .logo {
+      font-size: 3rem; font-weight: 700;
+      background: linear-gradient(90deg, #fff 0%, var(--accent) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; color: transparent; letter-spacing: -1px;
+    }
+    .tagline { color: var(--text-dim); margin-top: 6px; font-size: 1.05rem; }
+
+    /* ── Source section ─────────────────────────────────────── */
+    .sources-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 14px;
+      opacity: .7;
+    }
+    .source-badge {
+      font-size: .68rem;
+      padding: 3px 10px;
+      border-radius: 12px;
+      background: rgba(0,242,254,.07);
+      border: 1px solid rgba(0,242,254,.15);
+      color: var(--text-dim);
+      letter-spacing: .3px;
+    }
+    .source-badge.new {
+      background: rgba(34,197,94,.1);
+      border-color: rgba(34,197,94,.25);
+      color: #86efac;
+    }
+
+    /* ── Samples ────────────────────────────────────────────── */
+    .sample-group { margin-bottom: 10px; }
+    .sample-group-label {
+      font-size: .68rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-align: center;
+      margin-bottom: 7px;
+    }
+    .samples {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      justify-content: center; margin-bottom: 8px;
+    }
+    .sample-chip {
+      font-size: .78rem; padding: 6px 14px; border-radius: 20px;
+      background: var(--glass); border: 1px solid var(--border);
+      color: var(--text-dim); cursor: pointer; transition: all .2s;
+    }
+    .sample-chip:hover       { border-color: rgba(0,242,254,.35); color: var(--accent); }
+    .sample-chip.fake:hover  { border-color: rgba(255,0,85,.35);  color: var(--fake); }
+    .sample-chip.neut:hover  { border-color: rgba(255,204,0,.35); color: var(--uncertain); }
+    .sample-chip.telugu:hover{ border-color: rgba(34,197,94,.35); color: var(--lreal); }
+
+    /* ── Search ─────────────────────────────────────────────── */
+    .search-wrap {
+      background: var(--card);
+      backdrop-filter: blur(20px);
+      padding: 10px;
+      border-radius: 24px;
+      border: 1px solid var(--border);
+      display: flex; gap: 10px;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,.55);
+      margin-bottom: 36px;
+      transition: border-color .25s;
+    }
+    .search-wrap:focus-within { border-color: rgba(0,242,254,.35); }
+
+    input#queryInput {
+      flex: 1; background: transparent; border: none;
+      padding: 15px 22px; color: var(--text);
+      font-size: 1.08rem; font-family: inherit; min-width: 0;
+    }
+    input#queryInput:focus { outline: none; }
+    input#queryInput::placeholder { color: var(--text-dim); }
+
+    .btn-verify {
+      background: var(--accent); color: var(--bg);
+      border: none; padding: 14px 40px; border-radius: 18px;
+      font-weight: 700; cursor: pointer; font-family: inherit;
+      font-size: 1rem; transition: all .2s;
+      display: flex; align-items: center; gap: 9px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .btn-verify:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 24px var(--accent-dim);
+    }
+    .btn-verify:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+    /* ── Temporal context chip ──────────────────────────────── */
+    #temporalChip {
+      display: none;
+      margin: -24px auto 22px;
+      width: fit-content;
+      padding: 5px 16px;
+      border-radius: 20px;
+      font-size: .78rem;
+      font-family: 'JetBrains Mono', monospace;
+      border: 1px solid rgba(0,242,254,.3);
+      background: rgba(0,242,254,.07);
+      color: var(--accent);
+      text-align: center;
+    }
+
+    /* ── Loader spinner ─────────────────────────────────────── */
+    .spinner {
+      width: 18px; height: 18px;
+      border: 3px solid rgba(3,7,18,.3);
+      border-top-color: var(--bg);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none; flex-shrink: 0;
+    }
+
+    /* ── Result Grid ─────────────────────────────────────────── */
+    .result-grid {
+      display: none;
+      grid-template-columns: 1fr 340px;
+      gap: 30px;
+    }
+    .result-grid.visible { display: grid; animation: fadeIn .45s ease; }
+
+    /* ── Cards ──────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 36px;
+    }
+
+    /* ── Verdict ─────────────────────────────────────────────── */
+    .verdict-label {
+      font-size: .78rem; text-transform: uppercase;
+      letter-spacing: 1.5px; color: var(--text-dim); margin-bottom: 8px;
+    }
+    .verdict-value {
+      font-size: 3.4rem; font-weight: 700; line-height: 1;
+      margin-bottom: 10px; transition: color .4s;
+    }
+    .verdict-confidence {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .95rem; color: var(--text-dim); margin-bottom: 6px;
+    }
+    .verdict-meta {
+      font-size: .78rem; color: var(--text-dim); margin-bottom: 28px;
+    }
+
+    /* ── Temporal badge in result ───────────────────────────── */
+    .temporal-badge {
+      display: inline-block;
+      margin-bottom: 20px;
+      padding: 6px 14px;
+      border-radius: 14px;
+      font-size: .76rem;
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(0,242,254,.08);
+      border: 1px solid rgba(0,242,254,.2);
+      color: var(--accent);
+    }
+
+    /* ── Metrics ─────────────────────────────────────────────── */
+    .metric { margin-bottom: 24px; }
+    .metric-head {
+      display: flex; justify-content: space-between;
+      margin-bottom: 9px; font-size: .88rem;
+    }
+    .metric-head span:last-child {
+      font-family: 'JetBrains Mono', monospace; font-size: .82rem;
+    }
+    .progress-track {
+      height: 8px; background: rgba(255,255,255,.05);
+      border-radius: 4px; overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%; width: 0; border-radius: 4px;
+      transition: width 1.2s cubic-bezier(.16,1,.3,1);
+    }
+    .bar-real { background: var(--accent);    box-shadow: 0 0 14px rgba(0,242,254,.45); }
+    .bar-rag  { background: linear-gradient(90deg, var(--accent), #b400ff);
+                box-shadow: 0 0 14px rgba(0,242,254,.25); }
+
+    /* ── Mini stat cards ─────────────────────────────────────── */
+    .mini-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 28px; }
+    .mini-card {
+      background: rgba(0,0,0,.25);
+      border: 1px solid var(--border);
+      border-radius: 14px; padding: 14px 16px;
+    }
+    .mini-label { font-size: .7rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+    .mini-value { font-family: 'JetBrains Mono', monospace; font-size: .88rem; color: var(--accent); }
+
+    /* ── Reasoning ──────────────────────────────────────────── */
+    .reasoning-section { text-align: left; }
+    .reasoning-section h3 {
+      font-size: .82rem; text-transform: uppercase;
+      color: var(--text-dim); letter-spacing: 1.5px; margin-bottom: 12px;
+    }
+    .reasoning-content {
+      padding: 18px 20px; background: rgba(0,0,0,.22);
+      border-radius: 14px; color: var(--text-dim);
+      line-height: 1.75; font-size: .92rem;
+      border-left: 3px solid rgba(0,242,254,.3);
+    }
+    .reason-item {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .reason-item:last-child { border-bottom: none; }
+
+    /* ── Evidence panel ──────────────────────────────────────── */
+    .evidence-panel h3 {
+      font-size: .82rem; text-transform: uppercase;
+      color: var(--text-dim); letter-spacing: 1.5px; margin-bottom: 18px;
+    }
+
+    /* ── Freshness bar ──────────────────────────────────────── */
+    .freshness-bar {
+      display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .fresh-stat {
+      font-size: .7rem; padding: 3px 10px; border-radius: 10px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .fresh-stat.hot  { background: rgba(34,197,94,.12);  color: #22c55e; border: 1px solid rgba(34,197,94,.25); }
+    .fresh-stat.warm { background: rgba(245,158,11,.12); color: #f59e0b; border: 1px solid rgba(245,158,11,.25); }
+    .fresh-stat.cold { background: rgba(239,68,68,.12);  color: #ef4444; border: 1px solid rgba(239,68,68,.25); }
+
+    .news-card {
+      display: flex; gap: 14px;
+      background: rgba(255,255,255,.02);
+      border: 1px solid var(--border);
+      padding: 16px; border-radius: 18px; margin-bottom: 12px;
+      text-decoration: none; color: inherit;
+      cursor: pointer; transition: all .2s; position: relative;
+    }
+    .news-card:hover {
+      background: rgba(255,255,255,.05);
+      transform: translateX(4px);
+      border-color: rgba(0,242,254,.2);
+    }
+    /* Freshness stripe on left edge */
+    .news-card.fresh-hot  { border-left: 3px solid var(--fresh); }
+    .news-card.fresh-warm { border-left: 3px solid var(--stale); }
+    .news-card.fresh-cold { border-left: 3px solid var(--very-stale); opacity: .8; }
+
+    .card-icon {
+      width: 42px; height: 42px; border-radius: 10px;
+      background: #1a1a2e; object-fit: contain; flex-shrink: 0;
+    }
+    .card-body { flex: 1; min-width: 0; }
+    .card-title {
+      font-weight: 600; font-size: .92rem;
+      margin-bottom: 6px; line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .card-meta {
+      font-size: .76rem; color: var(--text-dim);
+      display: flex; gap: 7px; align-items: center; flex-wrap: wrap;
+    }
+    .time-ago-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .68rem; padding: 1px 7px; border-radius: 8px;
+    }
+    .time-ago-badge.hot  { background: rgba(34,197,94,.15);  color: #22c55e; }
+    .time-ago-badge.warm { background: rgba(245,158,11,.15); color: #f59e0b; }
+    .time-ago-badge.cold { background: rgba(239,68,68,.15);  color: #ef4444; }
+
+    .tag {
+      padding: 2px 8px; border-radius: 6px;
+      background: var(--glass); font-weight: 600;
+      text-transform: uppercase; font-size: .65rem;
+      letter-spacing: .5px; white-space: nowrap;
+    }
+    .tag-match     { background: rgba(0,242,254,.12);  color: var(--accent); }
+    .tag-deep      { background: rgba(255,0,255,.12);  color: #ff66ff; }
+    .tag-consensus { background: rgba(0,242,254,.18);  color: var(--accent); border: 1px solid rgba(0,242,254,.3); }
+    .tag-live      { background: rgba(255,204,0,.12);  color: #ffcc00; }
+    .tag-precision { background: rgba(0,255,128,.12);  color: #00ff80; }
+
+    /* ── Toast ──────────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 30px; left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(255,0,85,.14); border: 1px solid rgba(255,0,85,.4);
+      color: #ff8080; padding: 14px 28px; border-radius: 14px;
+      font-size: .88rem; z-index: 9999;
+      transition: transform .35s cubic-bezier(.16,1,.3,1);
+      backdrop-filter: blur(10px); max-width: 90vw;
+      text-align: center; pointer-events: none;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Animations ──────────────────────────────────────────── */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .result-grid.visible { grid-template-columns: 1fr; }
+      .verdict-value { font-size: 2.8rem; }
+      .logo { font-size: 2.2rem; }
+      .btn-verify { padding: 14px 22px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Status Bar ─────────────────────────────────────────── -->
+  <div class="status-bar">
+    <div id="statusDot" class="status-dot"></div>
+    <span id="statusText">System Initializing…</span>
+    <div class="status-right">
+      <span class="pill" id="indexPill">Loading…</span>
+      <!-- <span class="pill accent">TruthLens v9.5</span> -->
+    </div>
+  </div>
+
+  <!-- ── Live date/time bar ───────────────────────────────────── -->
+  <div id="dateBar">Loading…</div>
+
+  <div class="container">
+
+    <!-- ── Header ──────────────────────────────────────────────── -->
+    <header>
+      <div class="logo">TruthLens</div>
+      <p class="tagline">Real-Time AI News Verification </p>
+      <!-- · sentence-BERT + ANN + RAG · Hyderabad & India -->
+    </header>
+
+    <!-- ── Sources badge row ────────────────────────────────────── -->
+    <!-- <div class="sources-row">
+      <span class="source-badge">The Hindu</span>
+      <span class="source-badge">NDTV</span>
+      <span class="source-badge">Times of India</span>
+      <span class="source-badge">Indian Express</span>
+      <span class="source-badge">BBC World</span>
+      <span class="source-badge">Reuters</span>
+      <span class="source-badge">Telangana Today</span>
+      <span class="source-badge">ETV Bharat</span>
+      <span class="source-badge">News18 Telangana</span>
+      <span class="source-badge new">✦ V6 News Telugu</span>
+      <span class="source-badge new">✦ TV9 Telugu</span>
+      <span class="source-badge new">✦ TV9 India</span>
+      <span class="source-badge new">✦ Sakshi TV</span>
+      <span class="source-badge new">✦ ABN Telugu</span>
+      <span class="source-badge new">✦ IMD Weather</span>
+    </div> -->
+
+    <!-- ── Sample queries ──────────────────────────────────────── -->
+    <!-- <div class="sample-group">
+      <div class="sample-group-label">🌐 Quick verify samples</div>
+      <div class="samples">
+        <span class="sample-chip"      onclick="setQuery('IPL 2025 match result today')">🏏 IPL Today</span>
+        <span class="sample-chip"      onclick="setQuery('Heavy rain alert in Hyderabad today')">🌧️ Rain Today</span>
+        <span class="sample-chip"      onclick="setQuery('Hyderabad weather tomorrow forecast')">☀️ Tomorrow Weather</span>
+        <span class="sample-chip"      onclick="setQuery('Telangana news this week')">📰 This Week</span>
+        <span class="sample-chip"      onclick="setQuery('Stock market sensex today')">📈 Sensex Today</span>
+        <span class="sample-chip neut" onclick="setQuery('Hanuman Jayanti celebrations Hyderabad this month')">🙏 This Month</span>
+        <span class="sample-chip telugu" onclick="setQuery('V6 news Hyderabad latest')">📺 V6 News</span>
+        <span class="sample-chip telugu" onclick="setQuery('TV9 Telugu breaking news today')">📺 TV9 Telugu</span>
+        <span class="sample-chip fake" onclick="setQuery('Vaccines contain mind control microchips deep state')">❌ Fake</span>
+        <span class="sample-chip fake" onclick="setQuery('5G towers are spreading disease government hiding it')">❌ Disinfo</span>
+      </div>
+    </div> -->
+
+    <!-- ── Search Box ───────────────────────────────────────────── -->
+    <div class="search-wrap">
+      <input
+        type="text"
+        id="queryInput"
+        placeholder="Enter a claim, news headline, or local event… (Enter to verify)"
+        autocomplete="off"
+        maxlength="2000"
+      >
+      <button class="btn-verify" id="btnVerify" onclick="verifyClaim()">
+        <div class="spinner" id="spinner"></div>
+        <span id="btnText">VERIFY</span>
+      </button>
+    </div>
+
+    <!-- ── Temporal context chip (shown after query) ─────────────── -->
+    <div id="temporalChip"></div>
+
+    <!-- ── Result Grid ─────────────────────────────────────────── -->
+    <div id="resultArea" class="result-grid">
+
+      <!-- Left: Verdict + Metrics + Reasoning -->
+      <div class="card verdict-main">
+        <div class="verdict-label">Final Verdict</div>
+        <div id="verdictText"    class="verdict-value">—</div>
+        <div id="confidenceText" class="verdict-confidence">—</div>
+        <div id="verdictMeta"    class="verdict-meta">—</div>
+
+        <!-- Temporal badge -->
+        <div id="temporalBadge" class="temporal-badge" style="display:none"></div>
+
+        <!-- ANN + RAG bars -->
+        <div style="margin: 22px 0;">
+          <div class="metric">
+            <div class="metric-head">
+              <span>ANN Pattern Score (real)</span>
+              <span id="annScore">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="annBar" class="progress-bar bar-real"></div>
+            </div>
+          </div>
+          <div class="metric">
+            <div class="metric-head">
+              <span>RAG Evidence Match</span>
+              <span id="ragScore">0%</span>
+            </div>
+            <div class="progress-track">
+              <div id="ragBar" class="progress-bar bar-rag"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mini stat cards -->
+        <div class="mini-metrics">
+          <div class="mini-card">
+            <div class="mini-label">Topic</div>
+            <div class="mini-value" id="miniTopic">—</div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-label">Location</div>
+            <div class="mini-value" id="miniLoc">—</div>
+          </div>
+          <!-- <div class="mini-card">
+            <div class="mini-label">Sensationalism</div>
+            <div class="mini-value" id="miniSens">—</div>
+          </div>
+          <div class="mini-card">
+            <div class="mini-label">Attribution</div>
+            <div class="mini-value" id="miniAttr">—</div>
+          </div> -->
+        </div>
+
+        <!-- Reasoning -->
+        <div class="reasoning-section">
+          <h3>Expert Reasoning</h3>
+          <div id="reasoningText" class="reasoning-content">
+            Waiting for analysis…
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Evidence cards -->
+      <div class="card evidence-panel">
+        <h3>Top Evidence</h3>
+
+        <!-- Freshness summary bar -->
+        <div id="freshnessBar" class="freshness-bar"></div>
+
+        <div id="evidenceList">
+          <p style="color:var(--text-dim);font-style:italic;font-size:.9rem">
+            No results yet — enter a query above.
+          </p>
+        </div>
+      </div>
+
+    </div><!-- /result-grid -->
+  </div><!-- /container -->
+
+  <!-- ── Toast ──────────────────────────────────────────────── -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    'use strict';
+
+    // ── Live Date/Time display ─────────────────────────────────
+    function updateDateBar() {
+      const now = new Date();
+      const days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      const months = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+      const day  = days[now.getDay()];
+      const date = now.getDate();
+      const mon  = months[now.getMonth()];
+      const yr   = now.getFullYear();
+      const h    = String(now.getHours()).padStart(2,'0');
+      const m    = String(now.getMinutes()).padStart(2,'0');
+      const s    = String(now.getSeconds()).padStart(2,'0');
+      const tmr  = new Date(now); tmr.setDate(tmr.getDate() + 1);
+      const tmrLabel = `${days[tmr.getDay()]}, ${tmr.getDate()} ${months[tmr.getMonth()]}`;
+      document.getElementById('dateBar').innerHTML =
+        `<strong>${day}, ${date} ${mon} ${yr}</strong> &nbsp;·&nbsp; ${h}:${m}:${s} IST &nbsp;·&nbsp; Tomorrow: ${tmrLabel}`;
+    }
+    updateDateBar();
+    setInterval(updateDateBar, 1000);
+
+    // ── State ─────────────────────────────────────────────────
+    let isReady = false;
+
+    // ── Helpers ───────────────────────────────────────────────
+    function esc(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 4500);
+    }
+
+    function setQuery(text) {
+      document.getElementById('queryInput').value = text;
+      document.getElementById('queryInput').focus();
+    }
+
+    function verdictColor(v) {
+      if (v === 'REAL')        return 'var(--real)';
+      if (v === 'LIKELY REAL') return 'var(--lreal)';
+      if (v === 'UNCERTAIN')   return 'var(--uncertain)';
+      if (v === 'LIKELY FAKE') return 'var(--lfake)';
+      return 'var(--fake)';
+    }
+
+    function tagClass(matchType) {
+      if (!matchType) return 'tag-match';
+      if (matchType.includes('DEEP'))      return 'tag-deep';
+      if (matchType.includes('CONSENSUS')) return 'tag-consensus';
+      if (matchType.includes('LIVE'))      return 'tag-live';
+      if (matchType.includes('PRECISION')) return 'tag-precision';
+      return 'tag-match';
+    }
+
+    // Freshness class from age_hours
+    function freshnessClass(ageHours) {
+      if (ageHours == null) return 'warm';
+      if (ageHours < 6)  return 'hot';
+      if (ageHours < 24) return 'warm';
+      return 'cold';
+    }
+
+    // Temporal label map
+    const TEMPORAL_LABELS = {
+      today:     '⏱️ TODAY — Live search active',
+      tomorrow:  '🔮 TOMORROW — Forecast mode',
+      yesterday: '🕐 YESTERDAY',
+      week:      '📅 THIS WEEK',
+      month:     '🗓️ THIS MONTH',
+      recent:    '🔄 RECENT (48h)',
+      any:       null,
+    };
+
+    // ── Status polling ────────────────────────────────────────
+    async function checkStatus() {
+      try {
+        const res  = await fetch('/api/status');
+        const data = await res.json();
+        const dot  = document.getElementById('statusDot');
+        const txt  = document.getElementById('statusText');
+        const pill = document.getElementById('indexPill');
+
+        if (data.ready) {
+          dot.className   = 'status-dot ready';
+          txt.textContent = 'SYSTEM READY — Neural Engine Active';
+          pill.textContent = `Index: ${data.index_size ?? '–'} articles`;
+          isReady = true;
+        } else if (data.stage === 5) {
+          dot.className   = 'status-dot error';
+          txt.textContent = 'Error: ' + (data.status_msg || 'Init failed');
+          isReady = false;
+        } else {
+          dot.className   = 'status-dot';
+          txt.textContent = data.status_msg || 'Loading…';
+          isReady = false;
+        }
+      } catch {
+        document.getElementById('statusDot').className = 'status-dot error';
+        document.getElementById('statusText').textContent = 'Cannot reach server';
+      }
+    }
+    setInterval(checkStatus, 3000);
+    checkStatus();
+
+    // ── Enter key ────────────────────────────────────────────
+    document.getElementById('queryInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); verifyClaim(); }
+    });
+
+    // ── Main verify flow ──────────────────────────────────────
+    async function verifyClaim() {
+      if (!isReady) {
+        showToast('Engine still booting — wait for the status light to turn cyan.');
+        return;
+      }
+
+      const query = document.getElementById('queryInput').value.trim();
+      if (!query) { showToast('Please enter a claim or headline.'); return; }
+
+      const btn        = document.getElementById('btnVerify');
+      const btnText    = document.getElementById('btnText');
+      const spinner    = document.getElementById('spinner');
+      const resultArea = document.getElementById('resultArea');
+
+      // Loading state
+      btn.disabled          = true;
+      btnText.textContent   = 'ANALYZING…';
+      spinner.style.display = 'block';
+      resultArea.classList.remove('visible');
+      document.getElementById('temporalChip').style.display = 'none';
+
+      // Reset bars
+      document.getElementById('annBar').style.width = '0';
+      document.getElementById('ragBar').style.width = '0';
+
+      try {
+        const res = await fetch('/api/predict', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ query }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Server ${res.status}`);
+
+        // ── Temporal chip above results ─────────────────────
+        const tChip = document.getElementById('temporalChip');
+        const tLabel = TEMPORAL_LABELS[data.temporality];
+        if (tLabel) {
+          tChip.textContent = tLabel;
+          tChip.style.display = 'block';
+        }
+
+        // ── Verdict ─────────────────────────────────────────
+        const vEl = document.getElementById('verdictText');
+        vEl.textContent = (data.verdict_emoji ? data.verdict_emoji + ' ' : '') + data.verdict;
+        vEl.style.color = verdictColor(data.verdict);
+
+        document.getElementById('confidenceText').textContent =
+          `${(Math.round(data.confidence * 10) / 10).toFixed(1)}% CONFIDENCE`;
+
+        document.getElementById('verdictMeta').textContent =
+          `Real: ${(data.real_score * 100).toFixed(1)}%  ·  ` +
+          `Fake: ${(data.fake_score * 100).toFixed(1)}%  ·  ` +
+          `${Math.round(data.processing_ms)}ms`;
+
+        // ── Temporal badge in card ───────────────────────────
+        const tBadge = document.getElementById('temporalBadge');
+        if (tLabel) {
+          tBadge.textContent = tLabel;
+          tBadge.style.display = 'inline-block';
+        } else {
+          tBadge.style.display = 'none';
+        }
+
+        // ── Bars ────────────────────────────────────────────
+        const annPerc = Math.round((1 - (data.ann_fake_prob || 0)) * 100);
+        const ragPerc = Math.round((data.rag_similarity || 0) * 100);
+        document.getElementById('annScore').textContent = annPerc + '%';
+        document.getElementById('ragScore').textContent = ragPerc + '%';
+        setTimeout(() => {
+          document.getElementById('annBar').style.width = annPerc + '%';
+          document.getElementById('ragBar').style.width = ragPerc + '%';
+        }, 80);
+
+        // ── Mini stats ───────────────────────────────────────
+        document.getElementById('miniTopic').textContent = data.topic || '—';
+        document.getElementById('miniLoc').textContent   = data.location || '—';
+        // document.getElementById('miniSens').textContent  =
+        //   Math.round((data.sensationalism || 0) * 100) + '%';
+        // document.getElementById('miniAttr').textContent  =
+        //   Math.round((data.attribution || 0) * 100) + '%';
+
+        // ── Reasoning — split by | into separate lines ───────
+        const reasons = (data.explanation || 'No reasoning available.').split(' | ');
+        document.getElementById('reasoningText').innerHTML =
+          reasons.map(r => `<div class="reason-item">${esc(r)}</div>`).join('');
+
+        // ── Evidence freshness summary ───────────────────────
+        const arts = data.similar_articles || [];
+        const hotCount  = arts.filter(a => (a.age_hours || 999) < 6).length;
+        const warmCount = arts.filter(a => (a.age_hours || 999) >= 6 && (a.age_hours || 999) < 24).length;
+        const coldCount = arts.filter(a => (a.age_hours || 999) >= 24).length;
+        let fbarHtml = '';
+        if (hotCount)  fbarHtml += `<span class="fresh-stat hot">🔥 ${hotCount} &lt;6h</span>`;
+        if (warmCount) fbarHtml += `<span class="fresh-stat warm">⏰ ${warmCount} &lt;24h</span>`;
+        if (coldCount) fbarHtml += `<span class="fresh-stat cold">📅 ${coldCount} older</span>`;
+        document.getElementById('freshnessBar').innerHTML = fbarHtml;
+
+        // ── Evidence cards ───────────────────────────────────
+        document.getElementById('evidenceList').innerHTML = arts.length
+          ? arts.map(a => {
+              const fc = freshnessClass(a.age_hours);
+              return `
+              <a class="news-card fresh-${fc}"
+                 href="${esc(a.url)}"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 title="${esc(a.title)}">
+                <img class="card-icon"
+                     src="${esc(a.favicon || 'https://www.google.com/favicon.ico')}"
+                     alt="${esc(a.source)}"
+                     onerror="this.src='https://www.google.com/favicon.ico'">
+                <div class="card-body">
+                  <div class="card-title">${esc(a.title)}</div>
+                  <div class="card-meta">
+                    <span class="tag ${tagClass(a.match_type)}">${esc((a.match_type||'').replace(/_/g,' '))}</span>
+                    <span>${esc(a.source)}</span>
+                    <span class="time-ago-badge ${fc}">${esc(a.time_ago || '')}</span>
+                    <span>· ${Math.round((a.similarity || 0) * 100)}% match</span>
+                  </div>
+                </div>
+              </a>`;
+            }).join('')
+          : '<p style="color:var(--text-dim);font-style:italic;font-size:.9rem">No matching articles found in index.</p>';
+
+        resultArea.classList.add('visible');
+        resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      } catch (err) {
+        showToast('Error: ' + err.message);
+      } finally {
+        btn.disabled          = false;
+        btnText.textContent   = 'VERIFY';
+        spinner.style.display = 'none';
+      }
+    }
+  </script>
+</body>
+</html>
